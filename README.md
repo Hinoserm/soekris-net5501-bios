@@ -5,7 +5,7 @@ Fixes for Soekris Engineering's last BIOS for the net5501, comBIOS 1.33c
 
 - Large CompactFlash cards hang the BIOS during drive detection, or get a
   translated geometry with zero heads.
-- PCI option ROMs, including a video card's VGA BIOS, are never run.
+- A video card's VGA BIOS is never run.
 - A VGA BIOS that is run is told the wrong PCI bus and device.
 - A VGA BIOS runs before the BIOS timer is started.
 
@@ -22,7 +22,7 @@ SHA-256:
 
 ```
 f14ef586478d2f198c9888a1fda46a091f0a1eb0eb2fc5435c5148598bef1bb0  b5501_133c.bin (original)
-f92545ff25312234666c0dc0deefffb55e8a1f446cd686e051d9ede6ecdffd1a  b5501_133x.bin
+5e3258c1fd8265f92cf8a4be4f4afe9dd2871ea1827d9b340113c6cb9adcdcb4  b5501_133x.bin
 ```
 
 The original is still available from the Internet Archive:
@@ -38,7 +38,6 @@ Add `0xA800` to get a file offset.
 | Large CF cards no longer hang detection | `0x2973`, `0x2979` |
 | Version and date | `0x002D`, file `0x187F5` |
 | VGA option ROM is enabled and run | `0x2513`, `0x5776` |
-| Other PCI option ROMs are enabled | `0x5BD3` |
 | VGA ROM is told its own bus and device | `0x558C`, `0x5594` |
 | The timer runs before the VGA ROM | `0x2553`, `0x0334`, `0x0354` |
 
@@ -88,12 +87,18 @@ Step 3 writes the ROM BAR with `mov ecx,[0x15]`, but the ROM base is stored at
 `[0x14]`. The dword it reads is one byte off: `0x??980000` instead of
 `0x98000001`. The enable bit is never set, so the ROM never decodes, step 4
 fails, and the BIOS writes 0 back to the ROM BAR. The card works under an OS,
-but its video BIOS never runs and nothing appears on screen. The generic loop
-for other cards' option ROMs (`0x5BD3`) has the same bug.
+but its video BIOS never runs and nothing appears on screen.
 
 The fix puts an 11-byte helper in unused padding at `0x2513`. It loads
 `[0x14]`, sets bit 0, and jumps to the BIOS's own PCI config-write routine.
-Both call sites now call it.
+The VGA path now calls it.
+
+The generic loop for other cards' option ROMs (`0x5BD3`) has the same bug, and
+is deliberately left as it is. Because of the bug, the loader that would run
+those ROMs (`0x5C25`) has never run on any board. Enabling it makes an Intel
+e1000 card's boot ROM send POST into an endless `PCI Error 9B08001C` loop, so
+other cards keep working exactly as they did with the original BIOS: their
+ROMs are not run.
 
 Once the video BIOS runs, it takes over `INT 10h`. comBIOS prints everything
 through `INT 10h`, so its messages move to the screen. Keyboard input stays on

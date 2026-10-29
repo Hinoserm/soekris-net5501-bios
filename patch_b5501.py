@@ -20,12 +20,14 @@ PATCH = [
     # Version and date.
     (MAIN + 0x002D, b"1.33c 20080626", b"1.33x 20261029", "banner"),
     (0x187F5,       b"20080626",       b"20261029",       "date beside the reset vector"),
-    # PCI option ROMs: the ROM BAR was written from the dword at [0x15], a byte past the ROM base at
+    # VGA option ROM: the ROM BAR was written from the dword at [0x15], a byte past the ROM base at
     # [0x14], so the enable bit was never set and the ROM never decoded. A helper in unused padding
     # after 0x2512 writes [0x14] | 1 and tail-jumps to the PCI config-write routine at 0x54F8.
+    # The generic loop for other cards (0x5BD3) has the same bug and is left alone: fixing it hands
+    # their ROMs to a loader (0x5C25) that has never run, and an Intel e1000's boot ROM sends it into
+    # an endless "PCI Error 9B08001C" loop.
     (MAIN + 0x2513, bytes(11), bytes.fromhex("668b0e1400" "80c901" "e9da2f"), "ROM BAR helper"),
     (MAIN + 0x5776, bytes.fromhex("668b0e1500e87afd"), bytes.fromhex("e89acd9090909090"), "VGA ROM BAR"),
-    (MAIN + 0x5BD3, bytes.fromhex("668b0e1500e81df9"), bytes.fromhex("e83dc99090909090"), "other option ROM BARs"),
     # The VGA ROM was entered with AX = 0x0100 (bus 1, device 0) left in BX by 0x3CA5, instead of the
     # card's bus/devfn, which 0x3CA5 has just restored into CX. The no-usable-ROM branch (always a
     # failure: 0x3CF6 is stc/ret) goes straight to the failure exit at 0x55A6; the freed bytes hold mov bx,cx.
