@@ -3,12 +3,17 @@
 Fixes for Soekris Engineering's last BIOS for the net5501, comBIOS 1.33c
 (`b5501_133c.bin`, 2008-06-26), found by disassembling it:
 
-- Large CompactFlash cards hang the BIOS during drive detection, or get a
+- **Large CompactFlash cards** hang the BIOS during drive detection, or get a
   translated geometry with zero heads.
-- PCI option ROMs are never run: a video card's VGA BIOS, or a network card's
-  boot ROM. The loader for the latter has further faults of its own.
-- A VGA BIOS that is run is told the wrong PCI bus and device.
-- A VGA BIOS runs before the BIOS timer is started.
+- **PCI option ROMs are never run**, neither a video card's VGA BIOS nor a
+  network card's boot ROM. Once they can be, three more faults appear:
+  - the routine that checks a ROM corrupts the PCI scan that called it, which
+    hangs POST with a card such as an Intel e1000;
+  - the loader for network and other card ROMs has the same address slip
+    again, and never turns a ROM off after running it;
+  - a VGA BIOS is told the wrong PCI bus and device.
+- **A VGA BIOS runs before the BIOS timer is started**, so one that times its
+  delays with the tick count waits forever.
 
 The patched BIOS reports itself as `comBIOS ver. 1.33x 20261029`.
 
@@ -29,20 +34,33 @@ fa422f050a6bc9ccc7dfab4583ffa63a35dbea3720e92161c06920e0094e9e3f  b5501_133x.bin
 The original is still available from the Internet Archive:
 <https://web.archive.org/web/2020id_/http://www.soekris.com/media/software/b5501_133c.bin>
 
+## Option ROMs and the PCIROMS setting
+
+- **A video card's VGA BIOS** is always run during POST. After that, comBIOS's
+  messages go to the screen instead of the serial console, while keyboard input
+  stays on the serial console.
+- **Other cards' option ROMs**, such as a network card's PXE boot ROM, and the
+  board's own PXE ROM for its onboard Ethernet, run only when `PCIROMS` is
+  enabled (`set PCIROMS=Enabled` in the monitor; CMOS byte `0x85`). With it
+  disabled, POST behaves as the original BIOS did for those cards.
+- **Only devices on PCI bus 0** have their ROMs run, as in the original.
+
 ## The fixes
 
 Offsets are in the main BIOS module, which starts at file offset `0xA800`.
-Add `0xA800` to get a file offset.
+Add `0xA800` to get a file offset. Code added by the fixes lives in padding
+the original never used (`0x2513`, `0x2553`, `0x4C12`, `0x4D22`) or in the
+bytes freed by rewriting a routine smaller (`0x5D80`).
 
 | Fix | Where |
 |---|---|
 | Large CF cards no longer hang detection | `0x2973`, `0x2979` |
 | Version and date | `0x002D`, file `0x187F5` |
-| VGA option ROM is enabled and run | `0x2513`, `0x5776` |
-| VGA ROM is told its own bus and device | `0x558C`, `0x5594` |
-| Other cards' ROMs are enabled | `0x5BD3` |
+| ROM BARs are enabled correctly (VGA and other cards) | `0x2513`, `0x5776`, `0x5BD3` |
 | The ROM validator keeps the scan's bus/device | `0x4D22`, `0x577E`, `0x5BDB` |
-| The option-ROM loader enables ROMs and turns them off after | `0x4C12`, `0x5E42`, `0x5D80`, `0x55A1`, `0x5E7B` |
+| The loader enables card ROMs correctly | `0x4C12`, `0x5E42` |
+| ROMs are turned off after they run | `0x5D80`, `0x55A1`, `0x5E7B` |
+| A VGA ROM is told its own bus and device | `0x558C`, `0x5594` |
 | The timer runs before the VGA ROM | `0x2553`, `0x0334`, `0x0354` |
 
 ### Large CompactFlash cards hang detection
@@ -171,6 +189,10 @@ to the VGA scan. POST at `0x334` calls the helper. The original call at
 own handlers, dropping any hook the video BIOS installed, and step the tick
 count back to the RTC's whole second.
 
+A side effect: the serial console's output routine waits on the tick count
+too. A character it cannot send now times out after about a second, where
+before `0x354` it would have waited for ever.
+
 ## The image format and its checksum
 
 The file is a chain of modules, which `flashupdate` walks:
@@ -211,7 +233,7 @@ From the comBIOS monitor (Ctrl-P during boot), on the serial console:
 1. Run `download` and send the image with XMODEM/CRC. The BIOS expects 784
    blocks.
 2. Optionally check the downloaded copy before flashing: `db 4a820` should show
-   `comBIOS ver. 1.33x 20261029`.
+   `comBIOS ver. 1.33x 20261029`. XMODEM/CRC already protects the transfer.
 3. Run `flashupdate`. It should end with `Done.`
 4. Power-cycle the board. Until a cold boot, the old BIOS keeps running from
    its RAM copy. `db ffff0020` shows what is in the flash itself.
@@ -234,7 +256,7 @@ The patcher:
   and every byte it replaces;
 - updates the checksums of the modules it touches;
 - checks that every module sums to 0 and that the PXE ROM's own byte sum is
-  intact.
+  intact;
 - refuses to write over its own input.
 
 ## Other things found along the way

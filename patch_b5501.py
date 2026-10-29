@@ -27,12 +27,13 @@ PATCH = [
     (MAIN + 0x2513, bytes(11), bytes.fromhex("668b0e1400" "80c901" "e9da2f"), "ROM BAR helper"),
     (MAIN + 0x5776, bytes.fromhex("668b0e1500e87afd"), bytes.fromhex("e89acd9090909090"), "VGA ROM BAR"),
     (MAIN + 0x5BD3, bytes.fromhex("668b0e1500e81df9"), bytes.fromhex("e83dc99090909090"), "other cards' ROM BARs"),
-    # The ROM validator (0x60DC) overwrites EBX (0x6114, on its failure paths too) and returns with the
-    # ROM's size byte in BL (0x6178). Both callers use BX as their bus:devfn and keep scanning with it. In the generic pass an e1000 with a
-    # 14 KB ROM (size 0x1C) sent the scan back to device 3 function 4 and round to the card again,
-    # recording its ROM over and over until the list ran over the BIOS's work area: the countdown then
-    # stopped, booting hung, and with PCIROMS set the loader printed "PCI Error 9B08001C" endlessly for
-    # entries naming 00:1C. An 8-byte wrapper in unused padding at 0x4D22 keeps EBX across the call.
+    # The ROM validator (0x60DC) overwrites EBX (0x6114, on its failure paths too) and returns with
+    # the ROM's size byte in BL (0x6178). Both callers use BX as their bus:devfn and keep scanning
+    # with it. In the generic pass an e1000 with a 14 KB ROM (size 0x1C) sent the scan back to
+    # device 3 function 4 and round to the card again, recording its ROM over and over until the
+    # list ran over the BIOS's work area: the countdown then stopped, booting hung, and with
+    # PCIROMS set the loader printed "PCI Error 9B08001C" endlessly for entries naming 00:1C.
+    # An 8-byte wrapper in unused padding at 0x4D22 keeps EBX across the call.
     (MAIN + 0x4D22, bytes(8), bytes.fromhex("6653e8b513665bc3"), "validator keeps EBX"),
     (MAIN + 0x577E, bytes.fromhex("e85b09"), bytes.fromhex("e8a1f5"), "VGA scan calls it"),
     (MAIN + 0x5BDB, bytes.fromhex("e8fe04"), bytes.fromhex("e844f1"), "generic pass calls it"),
@@ -43,9 +44,10 @@ PATCH = [
     (MAIN + 0x5E42, bytes.fromhex("668b0e9803"), bytes.fromhex("e8cded9090"), "loader calls it"),
     # Nothing ever turned a ROM BAR off after its ROM ran (0x5DC3 would, but nothing calls it, and it
     # writes the value back unchanged), so a VGA card and a card after it both decoded their ROMs at
-    # 0x98000000. The selection routine (0x5D80) is rewritten smaller with the same choice -- the
-    # smallest unprocessed ROM by a signed compare of the size byte, as the original, the earlier on a tie -- and the bytes it frees hold 0x5DAE: run a ROM
-    # (0x5EC0), then turn off the ROM BAR of the device in BX, keeping the carry flag and ECX.
+    # 0x98000000. The selection routine (0x5D80) is rewritten smaller with the same choice (the
+    # smallest unprocessed ROM by a signed compare of the size byte, as the original, the earlier
+    # on a tie), and the bytes it frees hold 0x5DAE: run a ROM (0x5EC0), then turn off the ROM BAR
+    # of the device in BX, keeping the carry flag and ECX.
     (MAIN + 0x5D80,
      bytes.fromhex("515257b2000fb60e9403837c18ff750c83c61a833cff7427fec2e2ee8bfe0fb60e94032aca83c71a833dff74128a45023844027e08837d18ff74028bf7e2e65f5a59c3"),
      bytes.fromhex("505731f6bf5400833dff7419837d18ff740e85f674053845027d058a450289fe83c71aebe285f6750289fe5f58c3"
@@ -55,7 +57,8 @@ PATCH = [
     (MAIN + 0x5E7B, bytes.fromhex("e84200"), bytes.fromhex("e830ff"), "other ROMs: the same"),
     # The VGA ROM was entered with AX = 0x0100 (bus 1, device 0) left in BX by 0x3CA5, instead of the
     # card's bus/devfn, which 0x3CA5 has just restored into CX. The no-usable-ROM branch (always a
-    # failure: 0x3CF6 is stc/ret) goes straight to the failure exit at 0x55A6; the freed bytes hold mov bx,cx.
+    # failure: 0x3CF6 is stc/ret) goes straight to the failure exit at 0x55A6; the freed bytes hold
+    # mov bx,cx.
     (MAIN + 0x558C, bytes.fromhex("7408"), bytes.fromhex("7418"), "no usable ROM -> failure exit"),
     (MAIN + 0x5594, bytes.fromhex("eb05e85de7720b"), bytes.fromhex("8bd99090909090"), "VGA ROM gets its bus/devfn in AX"),
     # The VGA ROM ran before the timer: POST installed INT 08h and unmasked IRQ0 (0x4EF7, called at
