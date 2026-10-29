@@ -1,0 +1,175 @@
+# Soekris net5501 comBIOS 1.33x
+
+Fixes for Soekris Engineering's last BIOS for the net5501, comBIOS 1.33c
+(`b5501_133c.bin`, 2008-06-26), found by disassembling it:
+
+- CompactFlash cards larger than about 16 GB hang the BIOS during drive
+  detection.
+- PCI option ROMs, including a video card's VGA BIOS, are never run.
+- A VGA BIOS that is run is told the wrong PCI bus and device.
+
+The patched BIOS reports itself as `comBIOS ver. 1.33x 20261028`.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `b5501_133x.bin` | The patched BIOS image. |
+| `patch_b5501.py` | Builds it from the original `b5501_133c.bin`. |
+
+SHA-256:
+
+```
+f14ef586478d2f198c9888a1fda46a091f0a1eb0eb2fc5435c5148598bef1bb0  b5501_133c.bin (original)
+7dcb3ca81064b3a2d0d2b42bc991e8f2ea560e15e4376a259ab3a1164c14ccff  b5501_133x.bin
+```
+
+The original is still available from the Internet Archive:
+<https://web.archive.org/web/2020id_/http://www.soekris.com/media/software/b5501_133c.bin>
+
+## The fixes
+
+Offsets are in the main BIOS module, which starts at file offset `0xA800`.
+Add `0xA800` to get a file offset.
+
+| Fix | Where |
+|---|---|
+| Large CF cards no longer hang detection | `0x2973`, `0x2979` |
+| Version and date | `0x002D`, file `0x187F5` |
+| VGA option ROM is enabled and run | `0x2513`, `0x5776` |
+| Other PCI option ROMs are enabled | `0x5BD3` |
+| VGA ROM is told its own bus and device | `0x558C`, `0x5594` |
+
+### Large CompactFlash cards hang detection
+
+If a drive's IDENTIFY geometry has 1024 cylinders or more, the BIOS builds a
+translated geometry from the CHS product (`0x296D`):
+
+1. It computes `q = (C*H*S - 1) / 64512`.
+2. It derives a logical head count from `q` with an 8-step shift loop. That
+   loop only works for `q < 256`, which is up to about 8.4 GB.
+3. It divides the total by `heads * 63` to get the logical cylinder count
+   (`div cx` at `0x29AF`).
+
+CF cards commonly report their cylinder count as capacity / (16*63), capped at
+65535, instead of the ATA-style 16383. From 32769 cylinders up (about 16.9 GB),
+the head count comes out as 2. The quotient no longer fits in 16 bits, and the
+CPU raises a divide error. The BIOS points INT 0 at a bare `iret`, which
+returns to the faulting `div`, so it runs again forever.
+
+The fix caps the CHS product at `0xFC0000` sectors, the 16383/16/63 limit,
+before the head count is derived. Larger cards now get the same 1024/255/63
+translation as any disk over 8 GB. LBA access and the reported size come from
+IDENTIFY words 60-61 and are unaffected.
+
+### PCI option ROMs are never run
+
+When POST finds a VGA card (`0x5573`, PCI class 0x0001, 0x0300 or 0x0301), it:
+
+1. assigns the card's BARs;
+2. sizes its expansion ROM;
+3. maps the ROM at `0x98000000`;
+4. checks the ROM's `55AA` and `PCIR` headers;
+5. copies it to `C0000`;
+6. calls `C000:0003`.
+
+Step 3 writes the ROM BAR with `mov ecx,[0x15]`, but the ROM base is stored at
+`[0x14]`. The dword it reads is one byte off: `0x??980000` instead of
+`0x98000001`. The enable bit is never set, so the ROM never decodes, step 4
+fails, and the BIOS writes 0 back to the ROM BAR. The card works under an OS,
+but its video BIOS never runs and nothing appears on screen. The generic loop
+for other cards' option ROMs (`0x5BD3`) has the same bug.
+
+The fix puts an 11-byte helper in unused padding at `0x2513`. It loads
+`[0x14]`, sets bit 0, and jumps to the BIOS's own PCI config-write routine.
+Both call sites now call it.
+
+Once the video BIOS runs, it takes over `INT 10h`. comBIOS prints everything
+through `INT 10h`, so its messages move to the screen. Keyboard input stays on
+the serial console, because the net5501 has no keyboard controller.
+
+### A VGA ROM is told the wrong bus and device
+
+By the PCI firmware specification, a ROM's init routine is entered with
+AH = bus and AL = device/function. This BIOS restores the card's bus/devfn into
+CX just before the call (`0x3CA5`), but that same routine sets BX to `0x0100`,
+and the call does `mov ax,bx` (`0x5F00`). Every VGA ROM is therefore told it is
+at bus 1, device 0, and the net5501 has no bus 1. A ROM that uses AX to find
+its own configuration space and I/O ports reads a device that isn't there.
+
+The fix uses dead code. The invalid-ROM branch at `0x5596` always fails, since
+`0x3CF6` is `stc`/`ret`, so it now jumps straight to the existing failure exit
+at `0x55A6`. The freed bytes hold `mov bx,cx`.
+
+## The image format and its checksum
+
+The file is a chain of modules, which `flashupdate` walks:
+
+1. the VIA PXE option ROM (`55AA`);
+2. optional `FF` padding;
+3. an optional type 5 module;
+4. a type 1 or 2 module (the main BIOS);
+5. an optional `-BCP` block;
+6. a type 3 module (the boot block, which holds the reset vector);
+7. the end of the file.
+
+Each `SK_R` module starts with a 16-byte header:
+
+| Offset | Contents |
+|---|---|
+| 0x00 | `SK_R` |
+| 0x04 | length in 256-byte units (16-bit) |
+| 0x06 | type |
+| 0x08 | `0x55` |
+| 0x09 | revision |
+| 0x0E | checksum word |
+
+The checksum word is chosen so that all the module's 16-bit little-endian words
+sum to 0. To recompute it, zero the word, sum the module, and store the
+negated sum. Nothing in this BIOS appears to check it: `flashupdate` checks
+only the structure, the minimum revision and the total length. The patcher
+sets it correctly anyway, and checks every module before writing the file.
+
+## Flashing
+
+From the comBIOS monitor (Ctrl-P during boot), on the serial console:
+
+1. Run `download` and send the image with XMODEM/CRC. The BIOS expects 784
+   blocks.
+2. Optionally check the downloaded copy before flashing: `db 4a820` should show
+   `comBIOS ver. 1.33x 20261028`.
+3. Run `flashupdate`. It should end with `Done.`
+4. Power-cycle the board. Until a cold boot, the old BIOS keeps running from
+   its RAM copy. `db ffff0020` shows what is in the flash itself.
+
+**There is no recovery path.** The boot block is rewritten on every flash and
+contains only a jump to the main BIOS. A power cut or a bad image during
+`flashupdate` leaves a board that only an external flash programmer can
+revive. If a video card's own BIOS hangs during POST, removing the card brings
+the board back.
+
+## Building
+
+```bash
+python3 patch_b5501.py b5501_133c.bin b5501_133x.bin
+```
+
+The patcher:
+
+- refuses any input other than the exact original, checking both its SHA-256
+  and every byte it replaces;
+- updates the checksums of the modules it touches;
+- checks that every module sums to 0 and that the PXE ROM's own byte sum is
+  intact.
+
+## Other things found along the way
+
+- Memory runs at DDR266. The GeodeLink PLL multiplier is fixed at 7 (`0x3D2E`).
+- RAM is sized automatically, one or two ranks and up to 1 GB, by trying a table
+  of controller configurations (`0x43C6`). No jumper is involved.
+- A broken CF socket pin 47 (D08) shows up as every IDENTIFY word having bit 8
+  clear: a garbled model string ("RanDhsj" for "SanDisk") and a wrong size.
+
+## License
+
+See [LICENSE](LICENSE). comBIOS is Soekris Engineering's, not ours.

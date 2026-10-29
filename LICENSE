@@ -1,0 +1,39 @@
+The BIOS
+========
+
+comBIOS, and therefore the BIOS image in this repository (b5501_133x.bin), is
+the work of Soekris Engineering, Inc. We do not own it and claim no rights in
+it. The patched image is provided only so that owners of net5501 boards can
+keep using their hardware. Soekris Engineering is no longer in business; the
+original image was distributed freely from its website and is preserved by the
+Internet Archive.
+
+The patches and the patcher
+===========================
+
+The patcher (patch_b5501.py), the description of the patches, and the rest of
+this repository's own content are released into the public domain. Where a
+public-domain dedication is not recognised, they are instead available under
+the MIT License:
+
+Copyright (c) 2026 Hinoserm
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Flashing a BIOS can render a board unusable. Use these images at your own risk.
