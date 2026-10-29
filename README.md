@@ -3,10 +3,11 @@
 Fixes for Soekris Engineering's last BIOS for the net5501, comBIOS 1.33c
 (`b5501_133c.bin`, 2008-06-26), found by disassembling it:
 
-- CompactFlash cards larger than about 16 GB hang the BIOS during drive
-  detection.
+- Large CompactFlash cards hang the BIOS during drive detection, or get a
+  translated geometry with zero heads.
 - PCI option ROMs, including a video card's VGA BIOS, are never run.
 - A VGA BIOS that is run is told the wrong PCI bus and device.
+- A VGA BIOS runs before the BIOS timer is started.
 
 The patched BIOS reports itself as `comBIOS ver. 1.33x 20261028`.
 
@@ -21,7 +22,7 @@ SHA-256:
 
 ```
 f14ef586478d2f198c9888a1fda46a091f0a1eb0eb2fc5435c5148598bef1bb0  b5501_133c.bin (original)
-7dcb3ca81064b3a2d0d2b42bc991e8f2ea560e15e4376a259ab3a1164c14ccff  b5501_133x.bin
+ce9b33a85e418e3ec832ab430d4eef40ebe05e82ecceabac22995089e937faf6  b5501_133x.bin
 ```
 
 The original is still available from the Internet Archive:
@@ -39,6 +40,7 @@ Add `0xA800` to get a file offset.
 | VGA option ROM is enabled and run | `0x2513`, `0x5776` |
 | Other PCI option ROMs are enabled | `0x5BD3` |
 | VGA ROM is told its own bus and device | `0x558C`, `0x5594` |
+| The timer runs before the VGA ROM | `0x2553`, `0x0334` |
 
 ### Large CompactFlash cards hang detection
 
@@ -51,14 +53,23 @@ translated geometry from the CHS product (`0x296D`):
 3. It divides the total by `heads * 63` to get the logical cylinder count
    (`div cx` at `0x29AF`).
 
-CF cards commonly report their cylinder count as capacity / (16*63), capped at
-65535, instead of the ATA-style 16383. From 32769 cylinders up (about 16.9 GB),
-the head count comes out as 2. The quotient no longer fits in 16 bits, and the
-CPU raises a divide error. The BIOS points INT 0 at a bare `iret`, which
-returns to the faulting `div`, so it runs again forever.
+Drives normally report at most 16383/16/63, but CF cards often report a
+cylinder count closer to their real capacity. Once the CHS product passes
+16384 x 16 x 63 sectors, `q` reaches 256 and the head count goes wrong:
 
-The fix caps the CHS product at `0xFC0000` sectors, the 16383/16/63 limit,
-before the head count is derived. Larger cards now get the same 1024/255/63
+- **With `q` from 256 to 511** (16 heads, 63 sectors: 16385 to 32768
+  cylinders, about 8.5 to 16.9 GB), the head count comes out as 0. The divide
+  is skipped, and the drive gets a translated geometry with no heads.
+- **With `q` from 512 to 1535** (a CHS product of about 16.9 to 50.7 GB,
+  which includes every 16-head, 63-sector geometry from 32769 cylinders up),
+  the head count comes out as 1 to 4. The quotient no longer fits in 16 bits,
+  and the CPU raises a divide error. The BIOS points INT 0 at a bare `iret`,
+  which returns to the faulting `div`, so it runs again forever.
+- **With `q` of 1536 or more**, the head count comes out as 5 or more. The
+  divide fits, but the translated geometry is still wrong.
+
+The fix caps the CHS product at `0xFC0000` sectors (16384 x 16 x 63) before
+the head count is derived. Every larger geometry now gets the same 1024/255/63
 translation as any disk over 8 GB. LBA access and the reported size come from
 IDENTIFY words 60-61 and are unaffected.
 
@@ -97,21 +108,39 @@ and the call does `mov ax,bx` (`0x5F00`). Every VGA ROM is therefore told it is
 at bus 1, device 0, and the net5501 has no bus 1. A ROM that uses AX to find
 its own configuration space and I/O ports reads a device that isn't there.
 
-The fix uses dead code. The invalid-ROM branch at `0x5596` always fails, since
-`0x3CF6` is `stc`/`ret`, so it now jumps straight to the existing failure exit
-at `0x55A6`. The freed bytes hold `mov bx,cx`.
+The fix uses dead code. The branch at `0x5596`, taken when no usable ROM was
+found, always fails, since `0x3CF6` is `stc`/`ret`. It now jumps straight to
+the existing failure exit at `0x55A6`, and the freed bytes hold `mov bx,cx`.
+
+### A VGA BIOS runs before the timer
+
+POST calls the VGA scan (`0x5573`) at `0x334`, but installs the `INT 08h`
+timer handler and unmasks IRQ0 (`0x4EF7`) only at `0x354`. While the video
+BIOS runs, the BIOS tick count at `40:6C` does not move, and `INT 1Ah AH=00`
+keeps returning the same value. A video BIOS that times its delays with the
+tick count waits forever.
+
+The fix puts a 6-byte helper in unused padding at `0x2553`. It calls `0x4EF7`,
+which loads the tick count from the RTC and starts the timer, and then jumps
+to the VGA scan. POST at `0x334` calls the helper. `0x4EF7` only sets vectors,
+unmasks IRQ0 and reloads the tick count, so its later call at `0x354` changes
+nothing.
 
 ## The image format and its checksum
 
 The file is a chain of modules, which `flashupdate` walks:
 
-1. the VIA PXE option ROM (`55AA`);
+1. the PXE option ROM for the onboard VIA Rhine Ethernet (`55AA`);
 2. optional `FF` padding;
 3. an optional type 5 module;
 4. a type 1 or 2 module (the main BIOS);
-5. an optional `-BCP` block;
-6. a type 3 module (the boot block, which holds the reset vector);
-7. the end of the file.
+5. optional `FF` padding;
+6. an optional `-BCP` block;
+7. a type 3 module (the boot block, which holds the reset vector);
+8. the end of the file.
+
+In this image the type 5 module is not separate: it sits inside the main
+module, at file offset `0x15800`.
 
 Each `SK_R` module starts with a 16-byte header:
 
