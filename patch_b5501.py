@@ -33,7 +33,7 @@ PATCH = [
     # recording its ROM over and over until the list ran over the BIOS's work area: the countdown then
     # stopped, booting hung, and with PCIROMS set the loader printed "PCI Error 9B08001C" endlessly for
     # entries naming 00:1C. An 8-byte wrapper in unused padding at 0x4D22 keeps EBX across the call.
-    (MAIN + 0x4D22, bytes(6), bytes.fromhex("6653e8b513665bc3"), "validator keeps EBX"),
+    (MAIN + 0x4D22, bytes(8), bytes.fromhex("6653e8b513665bc3"), "validator keeps EBX"),
     (MAIN + 0x577E, bytes.fromhex("e85b09"), bytes.fromhex("e8a1f5"), "VGA scan calls it"),
     (MAIN + 0x5BDB, bytes.fromhex("e8fe04"), bytes.fromhex("e844f1"), "generic pass calls it"),
     # The loader for those ROMs (0x5C25, when PCIROMS is set) has never run either. It enables a card's
