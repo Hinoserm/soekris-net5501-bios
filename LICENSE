@@ -3,8 +3,8 @@ The BIOS
 
 The BIOS image in this repository (b5501_133x.bin) is a modified copy of
 Soekris Engineering's comBIOS 1.33c for the net5501. It contains comBIOS, the
-work of Soekris Engineering, Inc., and a PXE boot ROM for the onboard Ethernet
-containing code copyright Intel Corporation and VIA Technologies. We do not own
+work of Soekris Engineering, Inc., and a PXE boot ROM for the onboard VIA Rhine
+Ethernet containing code copyright Intel Corporation. We do not own
 any of it, claim no rights in it, and grant no licence to it. The patched image
 is provided only so that owners of net5501 boards can keep using their
 hardware. The original image was distributed freely from Soekris Engineering's

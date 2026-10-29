@@ -18,8 +18,8 @@ PATCH = [
     (MAIN + 0x2973, bytes.fromhex("81faf00f"), bytes.fromhex("81fafc00"), "cmp dx,0xff0 -> cmp dx,0xfc"),
     (MAIN + 0x2979, bytes.fromhex("baf00f"),   bytes.fromhex("bafc00"),   "mov dx,0xff0 -> mov dx,0xfc"),
     # Version and date.
-    (MAIN + 0x002D, b"1.33c 20080626", b"1.33x 20261028", "banner"),
-    (0x187F5,       b"20080626",       b"20261028",       "date beside the reset vector"),
+    (MAIN + 0x002D, b"1.33c 20080626", b"1.33x 20261029", "banner"),
+    (0x187F5,       b"20080626",       b"20261029",       "date beside the reset vector"),
     # PCI option ROMs: the ROM BAR was written from the dword at [0x15], a byte past the ROM base at
     # [0x14], so the enable bit was never set and the ROM never decoded. A helper in unused padding
     # after 0x2512 writes [0x14] | 1 and tail-jumps to the PCI config-write routine at 0x54F8.
@@ -34,9 +34,11 @@ PATCH = [
     # The VGA ROM ran before the timer: POST installed INT 08h and unmasked IRQ0 (0x4EF7, called at
     # 0x354) only after the VGA scan (0x5573, called at 0x334), so the tick count at 40:6C stood still and
     # a ROM that times its delays with it waited forever. A helper in unused padding at 0x2553 starts the
-    # timer and then runs the VGA scan; 0x4EF7 is idempotent, so the later call at 0x354 is harmless.
+    # timer and then runs the VGA scan. The original call at 0x354 goes: it would re-point INT 08h and
+    # INT 70h at the BIOS handlers, dropping any hook the VGA ROM installed, and step the tick count back.
     (MAIN + 0x2553, bytes(6), bytes.fromhex("e8a129" "e91a30"), "start the timer, then the VGA scan"),
     (MAIN + 0x0334, bytes.fromhex("e83c52"), bytes.fromhex("e81c22"), "POST calls the helper"),
+    (MAIN + 0x0354, bytes.fromhex("e8a04b"), bytes.fromhex("909090"), "no second timer start"),
 ]
 
 def sum16(b):
@@ -60,7 +62,8 @@ def modules(d):
 def main(argv):
     if len(argv) != 2: sys.exit(__doc__)
     src, dst = argv
-    if os.path.abspath(src) == os.path.abspath(dst): sys.exit("IN and OUT must differ")
+    if os.path.realpath(src) == os.path.realpath(dst) or (os.path.exists(dst) and os.path.samefile(src, dst)):
+        sys.exit("IN and OUT must differ")
     d = bytearray(open(src, "rb").read())
     if hashlib.sha256(d).hexdigest() != ORIG_SHA: sys.exit("not the expected b5501_133c.bin")
     for off, old, new, _ in PATCH:

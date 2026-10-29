@@ -9,7 +9,7 @@ Fixes for Soekris Engineering's last BIOS for the net5501, comBIOS 1.33c
 - A VGA BIOS that is run is told the wrong PCI bus and device.
 - A VGA BIOS runs before the BIOS timer is started.
 
-The patched BIOS reports itself as `comBIOS ver. 1.33x 20261028`.
+The patched BIOS reports itself as `comBIOS ver. 1.33x 20261029`.
 
 ## Files
 
@@ -22,7 +22,7 @@ SHA-256:
 
 ```
 f14ef586478d2f198c9888a1fda46a091f0a1eb0eb2fc5435c5148598bef1bb0  b5501_133c.bin (original)
-ce9b33a85e418e3ec832ab430d4eef40ebe05e82ecceabac22995089e937faf6  b5501_133x.bin
+f92545ff25312234666c0dc0deefffb55e8a1f446cd686e051d9ede6ecdffd1a  b5501_133x.bin
 ```
 
 The original is still available from the Internet Archive:
@@ -40,7 +40,7 @@ Add `0xA800` to get a file offset.
 | VGA option ROM is enabled and run | `0x2513`, `0x5776` |
 | Other PCI option ROMs are enabled | `0x5BD3` |
 | VGA ROM is told its own bus and device | `0x558C`, `0x5594` |
-| The timer runs before the VGA ROM | `0x2553`, `0x0334` |
+| The timer runs before the VGA ROM | `0x2553`, `0x0334`, `0x0354` |
 
 ### Large CompactFlash cards hang detection
 
@@ -122,9 +122,10 @@ tick count waits forever.
 
 The fix puts a 6-byte helper in unused padding at `0x2553`. It calls `0x4EF7`,
 which loads the tick count from the RTC and starts the timer, and then jumps
-to the VGA scan. POST at `0x334` calls the helper. `0x4EF7` only sets vectors,
-unmasks IRQ0 and reloads the tick count, so its later call at `0x354` changes
-nothing.
+to the VGA scan. POST at `0x334` calls the helper. The original call at
+`0x354` is removed: it would point `INT 08h` and `INT 70h` back at the BIOS's
+own handlers, dropping any hook the video BIOS installed, and step the tick
+count back to the RTC's whole second.
 
 ## The image format and its checksum
 
@@ -166,7 +167,7 @@ From the comBIOS monitor (Ctrl-P during boot), on the serial console:
 1. Run `download` and send the image with XMODEM/CRC. The BIOS expects 784
    blocks.
 2. Optionally check the downloaded copy before flashing: `db 4a820` should show
-   `comBIOS ver. 1.33x 20261028`.
+   `comBIOS ver. 1.33x 20261029`.
 3. Run `flashupdate`. It should end with `Done.`
 4. Power-cycle the board. Until a cold boot, the old BIOS keeps running from
    its RAM copy. `db ffff0020` shows what is in the flash itself.
@@ -190,6 +191,7 @@ The patcher:
 - updates the checksums of the modules it touches;
 - checks that every module sums to 0 and that the PXE ROM's own byte sum is
   intact.
+- refuses to write over its own input.
 
 ## Other things found along the way
 
