@@ -23,7 +23,7 @@ SHA-256:
 
 ```
 f14ef586478d2f198c9888a1fda46a091f0a1eb0eb2fc5435c5148598bef1bb0  b5501_133c.bin (original)
-70a626b7260c6c464da90b7d071fe33b2d26041710675e89ddc2b0eac9577980  b5501_133x.bin
+fa422f050a6bc9ccc7dfab4583ffa63a35dbea3720e92161c06920e0094e9e3f  b5501_133x.bin
 ```
 
 The original is still available from the Internet Archive:
@@ -97,17 +97,23 @@ The fix puts an 11-byte helper in unused padding at `0x2513`. It loads
 `[0x14]`, sets bit 0, and jumps to the BIOS's own PCI config-write routine.
 The VGA path now calls it.
 
+Once the video BIOS runs, it takes over `INT 10h`. comBIOS prints everything
+through `INT 10h`, so its messages move to the screen. Keyboard input stays on
+the serial console, because the net5501 has no keyboard controller.
+
 The generic loop for other cards' option ROMs (`0x5BD3`) has the same bug, and
 calls the same helper.
 
 ### The ROM validator clobbers the scan
 
-The routine that checks a mapped ROM (`0x60DC`) ends with `mov bl,[esi+2]`, so
-it returns with the ROM's size byte in BL. Both callers, the VGA scan and the
-generic pass, use BX as the bus/device they are scanning, and carry on from
-there.
+The routine that checks a mapped ROM (`0x60DC`) overwrites EBX (`0x6114`, on
+its failure paths too) and returns with the ROM's size byte in BL (`0x6178`).
+Both callers, the VGA scan and the generic pass, use BX as the bus/device they
+are scanning, and carry on from there.
 
-The VGA path got away with it, since it saves the card's address separately.
+The VGA scan keeps the card's address separately for running its ROM, but it
+too carried on from the wrong device. It could skip later devices, or come
+back to the card and switch it off (command register 0) as a second VGA card.
 In the generic pass, an Intel e1000 with a 14 KB boot ROM (size byte `0x1C`)
 sent the scan back to device 3, function 4. From there it went round to the
 card again, recording its ROM again each time, until the ROM list ran over the
@@ -115,8 +121,8 @@ BIOS's work area. The boot countdown then stopped and booting hung. With
 `PCIROMS` set, the loader below printed `PCI Error 9B08001C` endlessly, once
 for each copy of an entry naming device `00:1C`.
 
-A 6-byte wrapper in unused padding at `0x4D22` keeps BX across the call. Both
-callers (`0x577E`, `0x5BDB`) use it.
+An 8-byte wrapper in unused padding at `0x4D22` keeps EBX across the call.
+Both callers (`0x577E`, `0x5BDB`) use it.
 
 ### The loader for other cards' ROMs
 
@@ -132,7 +138,8 @@ ever reached it before, and it has faults of its own:
   `0x5DC3` would, but nothing calls it, and it writes the value back unchanged.
   A VGA card and a card after it both decoded their ROMs at `0x98000000`. The
   selection routine (`0x5D80`) is rewritten smaller, making the same choice
-  (the smallest unprocessed ROM, the earlier one on a tie). The bytes it frees
+  (the smallest unprocessed ROM, comparing the size byte as signed as the
+  original does, the earlier one on a tie). The bytes it frees
   hold a wrapper (`0x5DAE`) that runs a ROM and then turns its ROM BAR off. The
   VGA path (`0x55A1`) and the loader (`0x5E7B`) both call it.
 

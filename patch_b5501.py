@@ -27,13 +27,13 @@ PATCH = [
     (MAIN + 0x2513, bytes(11), bytes.fromhex("668b0e1400" "80c901" "e9da2f"), "ROM BAR helper"),
     (MAIN + 0x5776, bytes.fromhex("668b0e1500e87afd"), bytes.fromhex("e89acd9090909090"), "VGA ROM BAR"),
     (MAIN + 0x5BD3, bytes.fromhex("668b0e1500e81df9"), bytes.fromhex("e83dc99090909090"), "other cards' ROM BARs"),
-    # The ROM validator (0x60DC) ends with mov bl,[esi+2]: it leaves the ROM's size byte in BL. Both
-    # callers use BX as their bus:devfn and keep scanning with it. In the generic pass an e1000 with a
+    # The ROM validator (0x60DC) overwrites EBX (0x6114, on its failure paths too) and returns with the
+    # ROM's size byte in BL (0x6178). Both callers use BX as their bus:devfn and keep scanning with it. In the generic pass an e1000 with a
     # 14 KB ROM (size 0x1C) sent the scan back to device 3 function 4 and round to the card again,
     # recording its ROM over and over until the list ran over the BIOS's work area: the countdown then
     # stopped, booting hung, and with PCIROMS set the loader printed "PCI Error 9B08001C" endlessly for
-    # entries naming 00:1C. A 6-byte wrapper in unused padding at 0x4D22 keeps BX across the call.
-    (MAIN + 0x4D22, bytes(6), bytes.fromhex("53e8b6135bc3"), "validator keeps BX"),
+    # entries naming 00:1C. An 8-byte wrapper in unused padding at 0x4D22 keeps EBX across the call.
+    (MAIN + 0x4D22, bytes(6), bytes.fromhex("6653e8b513665bc3"), "validator keeps EBX"),
     (MAIN + 0x577E, bytes.fromhex("e85b09"), bytes.fromhex("e8a1f5"), "VGA scan calls it"),
     (MAIN + 0x5BDB, bytes.fromhex("e8fe04"), bytes.fromhex("e844f1"), "generic pass calls it"),
     # The loader for those ROMs (0x5C25, when PCIROMS is set) has never run either. It enables a card's
@@ -44,11 +44,11 @@ PATCH = [
     # Nothing ever turned a ROM BAR off after its ROM ran (0x5DC3 would, but nothing calls it, and it
     # writes the value back unchanged), so a VGA card and a card after it both decoded their ROMs at
     # 0x98000000. The selection routine (0x5D80) is rewritten smaller with the same choice -- the
-    # smallest unprocessed ROM, the earlier on a tie -- and the bytes it frees hold 0x5DAE: run a ROM
+    # smallest unprocessed ROM by a signed compare of the size byte, as the original, the earlier on a tie -- and the bytes it frees hold 0x5DAE: run a ROM
     # (0x5EC0), then turn off the ROM BAR of the device in BX, keeping the carry flag and ECX.
     (MAIN + 0x5D80,
      bytes.fromhex("515257b2000fb60e9403837c18ff750c83c61a833cff7427fec2e2ee8bfe0fb60e94032aca83c71a833dff74128a45023844027e08837d18ff74028bf7e2e65f5a59c3"),
-     bytes.fromhex("505731f6bf5400833dff7419837d18ff740e85f6740538450273058a450289fe83c71aebe285f6750289fe5f58c3"
+     bytes.fromhex("505731f6bf5400833dff7419837d18ff740e85f674053845027d058a450289fe83c71aebe285f6750289fe5f58c3"
                    "e80f019c66516631c9bf3000e83bf766599dc3") + b"\x90" * 2,
      "ROM selection as before, smaller; run a ROM then turn its ROM BAR off"),
     (MAIN + 0x55A1, bytes.fromhex("e81c09"), bytes.fromhex("e80a08"), "VGA ROM: run it, then its ROM BAR off"),
