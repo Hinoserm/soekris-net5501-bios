@@ -5,7 +5,8 @@ Fixes for Soekris Engineering's last BIOS for the net5501, comBIOS 1.33c
 
 - Large CompactFlash cards hang the BIOS during drive detection, or get a
   translated geometry with zero heads.
-- A video card's VGA BIOS is never run.
+- PCI option ROMs are never run: a video card's VGA BIOS, or a network card's
+  boot ROM. The loader for the latter has further faults of its own.
 - A VGA BIOS that is run is told the wrong PCI bus and device.
 - A VGA BIOS runs before the BIOS timer is started.
 
@@ -22,7 +23,7 @@ SHA-256:
 
 ```
 f14ef586478d2f198c9888a1fda46a091f0a1eb0eb2fc5435c5148598bef1bb0  b5501_133c.bin (original)
-5e3258c1fd8265f92cf8a4be4f4afe9dd2871ea1827d9b340113c6cb9adcdcb4  b5501_133x.bin
+b0d413255075def5bf6c7dd86734888e351b8527d617e73813ba9f2ec19c6e71  b5501_133x.bin
 ```
 
 The original is still available from the Internet Archive:
@@ -39,6 +40,8 @@ Add `0xA800` to get a file offset.
 | Version and date | `0x002D`, file `0x187F5` |
 | VGA option ROM is enabled and run | `0x2513`, `0x5776` |
 | VGA ROM is told its own bus and device | `0x558C`, `0x5594` |
+| Other cards' ROMs are enabled | `0x5BD3` |
+| The option-ROM loader enables, orders and closes ROMs correctly | `0x4C12`, `0x5E42`, `0x5D80`, `0x55A1`, `0x5E7B` |
 | The timer runs before the VGA ROM | `0x2553`, `0x0334`, `0x0354` |
 
 ### Large CompactFlash cards hang detection
@@ -94,11 +97,31 @@ The fix puts an 11-byte helper in unused padding at `0x2513`. It loads
 The VGA path now calls it.
 
 The generic loop for other cards' option ROMs (`0x5BD3`) has the same bug, and
-is deliberately left as it is. Because of the bug, the loader that would run
-those ROMs (`0x5C25`) has never run on any board. Enabling it makes an Intel
-e1000 card's boot ROM send POST into an endless `PCI Error 9B08001C` loop, so
-other cards keep working exactly as they did with the original BIOS: their
-ROMs are not run.
+calls the same helper.
+
+### The loader for other cards' ROMs
+
+With `PCIROMS` set, POST runs the ROMs the generic loop recorded, plus the
+board's own PXE ROM for the onboard Rhine Ethernet (`0x5C25`). Because of the
+ROM BAR bug, no card's ROM ever reached this loader, and it has faults of its
+own. With only the generic-loop fix, an Intel e1000 card sent POST into an
+endless `PCI Error 9B08001C` loop.
+
+- **The same off-by-one.** It enables a card's ROM BAR from the dword at
+  `[0x398]`, one byte past the window base at `[0x397]`. The ROM never decodes,
+  and the copy fails with error `0x8308`. A 9-byte helper in unused padding at
+  `0x4C12` returns `[0x397] | 1`, called from `0x5E42`.
+- **The order ROMs run in.** It always picked the smallest unprocessed ROM, so
+  the onboard Rhine PXE ROM ran before a card's. With the original BIOS it was
+  the only one, so nothing ran after it. The repeating error names a device
+  that is not in the list, so the list was overwritten by the time the next ROM
+  ran. The selection routine (`0x5D80`) is rewritten in place: every card ROM
+  first, then the board's built-in ROM, each exactly once.
+- **ROM BARs left on.** Nothing turned a ROM BAR off after its ROM ran.
+  (`0x5DC3` would, but nothing calls it, and it clears the wrong bit.) A VGA
+  card and a card after it both decoded their ROMs at `0x98000000`. In the
+  bytes the rewritten routine frees, a wrapper runs a ROM and then turns its
+  ROM BAR off. The VGA path (`0x55A1`) and the loader (`0x5E7B`) both call it.
 
 Once the video BIOS runs, it takes over `INT 10h`. comBIOS prints everything
 through `INT 10h`, so its messages move to the screen. Keyboard input stays on

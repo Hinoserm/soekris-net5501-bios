@@ -23,11 +23,29 @@ PATCH = [
     # VGA option ROM: the ROM BAR was written from the dword at [0x15], a byte past the ROM base at
     # [0x14], so the enable bit was never set and the ROM never decoded. A helper in unused padding
     # after 0x2512 writes [0x14] | 1 and tail-jumps to the PCI config-write routine at 0x54F8.
-    # The generic loop for other cards (0x5BD3) has the same bug and is left alone: fixing it hands
-    # their ROMs to a loader (0x5C25) that has never run, and an Intel e1000's boot ROM sends it into
-    # an endless "PCI Error 9B08001C" loop.
+    # The generic loop for other cards (0x5BD3) has the same bug; it calls the same helper.
     (MAIN + 0x2513, bytes(11), bytes.fromhex("668b0e1400" "80c901" "e9da2f"), "ROM BAR helper"),
     (MAIN + 0x5776, bytes.fromhex("668b0e1500e87afd"), bytes.fromhex("e89acd9090909090"), "VGA ROM BAR"),
+    (MAIN + 0x5BD3, bytes.fromhex("668b0e1500e81df9"), bytes.fromhex("e83dc99090909090"), "other cards' ROM BARs"),
+    # The loader that runs those other ROMs (0x5C25, when PCIROMS is set) has never run: no card's ROM
+    # could validate. Two faults in it. It enables a card's ROM BAR from the dword at [0x398], a byte
+    # past the window base at [0x397] -- the same slip -- so the copy reads nothing. A helper in unused
+    # padding at 0x4C12 returns [0x397] | 1. And it runs the smallest ROM first, so the onboard Rhine
+    # PXE ROM ran before a card's and the list was found overwritten after it. The selection routine
+    # (0x5D80) is rewritten in place: card ROMs first, the board's built-in ROM last, each once.
+    (MAIN + 0x4C12, bytes(9), bytes.fromhex("668b0e970380c901c3"), "loader ROM BAR helper"),
+    (MAIN + 0x5E42, bytes.fromhex("668b0e9803"), bytes.fromhex("e8cded9090"), "loader calls it"),
+    (MAIN + 0x5D80,
+     bytes.fromhex("515257b2000fb60e9403837c18ff750c83c61a833cff7427fec2e2ee8bfe0fb60e94032aca83c71a833dff74128a45023844027e08837d18ff74028bf7e2e65f5a59c3"),
+     bytes.fromhex("5057b001bf5400833dff7410837d18ff7405384503740b83c71aebebfec03c0372e289fe5f58c3")
+     # In the 28 bytes the old routine leaves free: 0x5DA7 turns the ROM BAR of the device in BX off,
+     # keeping all registers and flags; 0x5DBD runs a ROM (0x5EC0) and then does that. Nothing ever
+     # turned a ROM BAR off after its ROM ran (0x5DC3 would, but nothing calls it and it clears the
+     # wrong bit), so a VGA card and a card behind it both decoded their ROMs at 0x98000000.
+     + bytes.fromhex("9c66506651576631c9bf3000e842f75f665966589dc3" "e80001ebe5") + b"\x90",
+     "ROM selection: cards first, built-in last; ROM BAR off after a ROM runs"),
+    (MAIN + 0x55A1, bytes.fromhex("e81c09"), bytes.fromhex("e81908"), "VGA ROM: run it, then its ROM BAR off"),
+    (MAIN + 0x5E7B, bytes.fromhex("e84200"), bytes.fromhex("e83fff"), "other ROMs: the same"),
     # The VGA ROM was entered with AX = 0x0100 (bus 1, device 0) left in BX by 0x3CA5, instead of the
     # card's bus/devfn, which 0x3CA5 has just restored into CX. The no-usable-ROM branch (always a
     # failure: 0x3CF6 is stc/ret) goes straight to the failure exit at 0x55A6; the freed bytes hold mov bx,cx.
