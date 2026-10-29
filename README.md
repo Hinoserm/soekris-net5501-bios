@@ -23,7 +23,7 @@ SHA-256:
 
 ```
 f14ef586478d2f198c9888a1fda46a091f0a1eb0eb2fc5435c5148598bef1bb0  b5501_133c.bin (original)
-b0d413255075def5bf6c7dd86734888e351b8527d617e73813ba9f2ec19c6e71  b5501_133x.bin
+70a626b7260c6c464da90b7d071fe33b2d26041710675e89ddc2b0eac9577980  b5501_133x.bin
 ```
 
 The original is still available from the Internet Archive:
@@ -41,7 +41,8 @@ Add `0xA800` to get a file offset.
 | VGA option ROM is enabled and run | `0x2513`, `0x5776` |
 | VGA ROM is told its own bus and device | `0x558C`, `0x5594` |
 | Other cards' ROMs are enabled | `0x5BD3` |
-| The option-ROM loader enables, orders and closes ROMs correctly | `0x4C12`, `0x5E42`, `0x5D80`, `0x55A1`, `0x5E7B` |
+| The ROM validator keeps the scan's bus/device | `0x4D22`, `0x577E`, `0x5BDB` |
+| The option-ROM loader enables ROMs and turns them off after | `0x4C12`, `0x5E42`, `0x5D80`, `0x55A1`, `0x5E7B` |
 | The timer runs before the VGA ROM | `0x2553`, `0x0334`, `0x0354` |
 
 ### Large CompactFlash cards hang detection
@@ -99,33 +100,41 @@ The VGA path now calls it.
 The generic loop for other cards' option ROMs (`0x5BD3`) has the same bug, and
 calls the same helper.
 
+### The ROM validator clobbers the scan
+
+The routine that checks a mapped ROM (`0x60DC`) ends with `mov bl,[esi+2]`, so
+it returns with the ROM's size byte in BL. Both callers, the VGA scan and the
+generic pass, use BX as the bus/device they are scanning, and carry on from
+there.
+
+The VGA path got away with it, since it saves the card's address separately.
+In the generic pass, an Intel e1000 with a 14 KB boot ROM (size byte `0x1C`)
+sent the scan back to device 3, function 4. From there it went round to the
+card again, recording its ROM again each time, until the ROM list ran over the
+BIOS's work area. The boot countdown then stopped and booting hung. With
+`PCIROMS` set, the loader below printed `PCI Error 9B08001C` endlessly, once
+for each copy of an entry naming device `00:1C`.
+
+A 6-byte wrapper in unused padding at `0x4D22` keeps BX across the call. Both
+callers (`0x577E`, `0x5BDB`) use it.
+
 ### The loader for other cards' ROMs
 
-With `PCIROMS` set, POST runs the ROMs the generic loop recorded, plus the
-board's own PXE ROM for the onboard Rhine Ethernet (`0x5C25`). Because of the
-ROM BAR bug, no card's ROM ever reached this loader, and it has faults of its
-own. With only the generic-loop fix, an Intel e1000 card sent POST into an
-endless `PCI Error 9B08001C` loop.
+With `PCIROMS` set, POST runs the ROMs the generic pass recorded, plus the
+board's own PXE ROM for the onboard Rhine Ethernet (`0x5C25`). No card's ROM
+ever reached it before, and it has faults of its own:
 
 - **The same off-by-one.** It enables a card's ROM BAR from the dword at
   `[0x398]`, one byte past the window base at `[0x397]`. The ROM never decodes,
   and the copy fails with error `0x8308`. A 9-byte helper in unused padding at
   `0x4C12` returns `[0x397] | 1`, called from `0x5E42`.
-- **The order ROMs run in.** It always picked the smallest unprocessed ROM, so
-  the onboard Rhine PXE ROM ran before a card's. With the original BIOS it was
-  the only one, so nothing ran after it. The repeating error names a device
-  that is not in the list, so the list was overwritten by the time the next ROM
-  ran. The selection routine (`0x5D80`) is rewritten in place: every card ROM
-  first, then the board's built-in ROM, each exactly once.
 - **ROM BARs left on.** Nothing turned a ROM BAR off after its ROM ran.
-  (`0x5DC3` would, but nothing calls it, and it clears the wrong bit.) A VGA
-  card and a card after it both decoded their ROMs at `0x98000000`. In the
-  bytes the rewritten routine frees, a wrapper runs a ROM and then turns its
-  ROM BAR off. The VGA path (`0x55A1`) and the loader (`0x5E7B`) both call it.
-
-Once the video BIOS runs, it takes over `INT 10h`. comBIOS prints everything
-through `INT 10h`, so its messages move to the screen. Keyboard input stays on
-the serial console, because the net5501 has no keyboard controller.
+  `0x5DC3` would, but nothing calls it, and it writes the value back unchanged.
+  A VGA card and a card after it both decoded their ROMs at `0x98000000`. The
+  selection routine (`0x5D80`) is rewritten smaller, making the same choice
+  (the smallest unprocessed ROM, the earlier one on a tie). The bytes it frees
+  hold a wrapper (`0x5DAE`) that runs a ROM and then turns its ROM BAR off. The
+  VGA path (`0x55A1`) and the loader (`0x5E7B`) both call it.
 
 ### A VGA ROM is told the wrong bus and device
 
